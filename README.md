@@ -15,7 +15,8 @@ bsdpan-Mail-SpamAssassin-CompiledRegexps-body_0
 
 ### unpackaged
 
-List files in PREFIX that are not provided by any installed package.
+List files in PREFIX that are not provided by any installed package, ignoring
+files specified in env `IGNORE_UNPACKAGED`.
 
 ```
 % pkg-decruft unpackaged
@@ -27,13 +28,10 @@ List files in PREFIX that are not provided by any installed package.
 ### libcheck
 
 Check for packaged files that link against unpackaged, compat, or obsolete
-libraries.
+libraries, ignoring files specified in env `IGNORE_LLD`.
 
 ```
 % pkg-decruft libcheck
 compat10x-amd64-10.3.1003000.20170608: /usr/local/lib/compat/pam_ssh.so.5 missing library libssh.so.5
 compat10x-amd64-10.3.1003000.20170608: /usr/local/lib32/compat/pam_ssh.so.5 missing library libssh.so.5
-ELF interpreter /lib64/ld-linux-x86-64.so.2 not found, error 2
-ELF interpreter /lib64/ld-linux-x86-64.so.2 not found, error 2
-ELF interpreter /lib64/ld-linux-x86-64.so.2 not found, error 2
 ```

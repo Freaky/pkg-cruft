@@ -26,7 +26,14 @@
 require 'open3'
 
 PREFIX = ENV.fetch('PREFIX', '/usr/local')
+
 CONCURRENCY = ENV.fetch('CONCURRENCY', 16).to_i.clamp(1, 32)
+
+IGNORE_UNPACKAGED = ENV.fetch('IGNORE_UNPACKAGED', 'www/*:poudriere/*:varnish/*')
+                       .split(':').map{|pat| File.join(PREFIX, pat) }
+
+IGNORE_LLD = ENV.fetch('IGNORE_LDD', 'go/src/*/testdata/*')
+                .split(':').map{|pat| File.join(PREFIX, pat) }
 
 trap(:INT) do
   puts "Interrupt"
@@ -188,10 +195,8 @@ libcheck:
 
     pkgdb = Pkgdb.new
 
-    ignore = %w(www/* poudriere/* varnish/*).map{|pat| File.join(PREFIX, pat) }
-
     Find.find(PREFIX) do |f|
-      if ignore.any? { |ign| File.fnmatch(ign, f) }
+      if IGNORE_UNPACKAGED.any? { |ign| File.fnmatch(ign, f) }
         Find.prune
       elsif File.file?(f) && !pkgdb.pkg_for_file(f)
         puts f
@@ -212,7 +217,7 @@ libcheck:
     defunct = Pkg.defunct_packages
 
     Concurrently.new(threads: CONCURRENCY) do |exes|
-      Ldd.libs(exes)
+      Ldd.libs(exes.reject { |f| IGNORE_LLD.any? { |ign| File.fnmatch(ign, f) } })
     end.each(pkgdb.each_file.each_slice(16)) do |batch|
       batch.each do |exe, libs|
         pkg = pkgdb.pkg_for_file(exe)
