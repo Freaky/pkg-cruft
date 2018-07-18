@@ -106,7 +106,7 @@ end
 
 class Pkgdb
   def initialize
-    @pkg_files = Concurrently.new(threads: CONCURRENCY) do |pkgs|
+    @pkg_files = Concurrently.new(threads: 4) do |pkgs|
       Pkg.pkg_plist(pkgs)
     end.each(Pkg.local_packages.each_slice(32)).reduce({}, :merge)
 
