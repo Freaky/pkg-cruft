@@ -1,0 +1,258 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# The MIT License (MIT)
+#
+# Copyright (c) 2018 Thomas Hurst
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+require 'open3'
+
+PREFIX = ENV.fetch('PREFIX', '/usr/local')
+
+CONCURRENCY = ENV.fetch('CONCURRENCY', 16).to_i.clamp(1, 32)
+
+IGNORE_UNPACKAGED = ENV.fetch('IGNORE_UNPACKAGED', 'www/*:poudriere/*:varnish/*')
+                       .split(':').map{|pat| File.join(PREFIX, pat) }
+
+IGNORE_LLD = ENV.fetch('IGNORE_LDD', 'go/src/*/testdata/*')
+                .split(':').map{|pat| File.join(PREFIX, pat) }
+
+trap(:INT) do
+  puts "Interrupt"
+  exit! 2
+end
+
+Thread.abort_on_exception = true
+
+class Concurrently
+  def initialize(threads: 2, &job)
+    @job = job
+    @threads = Integer(threads)
+  end
+
+  def each(input)
+    return enum_for(:each, input) unless block_given?
+
+    inq = SizedQueue.new(@threads * 4)
+    outq = SizedQueue.new(@threads * 4)
+
+    pool = @threads.times.map do
+      Thread.new do
+        begin
+          while (work = inq.deq)
+            outq.enq @job.call(work)
+          end
+        ensure
+          outq.enq Thread.current
+        end
+      end
+    end
+
+    ingest = Thread.new do
+      input.each { |i| inq.enq(i) unless i.nil? }
+      inq.close
+    end
+
+    until pool.empty?
+      case (res = outq.deq)
+      when Thread then pool.delete(res).join
+      else yield res
+      end
+    end
+
+    ingest.join
+  end
+end
+
+module Ldd
+  Lib = Struct.new(:name, :path)
+  NOT_FOUND = Class.new
+
+  def self.libs(bins)
+    out, _err, status = Open3.capture3('/usr/bin/ldd', '-f', '%A %o %p\n', *bins)
+
+    out.lines
+      .map { |line| line.chomp.split(" ", 3) }
+      .group_by(&:first)
+      .transform_values do |v|
+        v.map do |_exe, lib, path|
+          Lib.new(lib, path == 'not found' ? NOT_FOUND : File.absolute_path(path))
+        end
+    end
+  end
+end
+
+module Pkg
+  def self.pkg(*args)
+    out, err, status = Open3.capture3('/usr/sbin/pkg', *args)
+    raise "pkg exited #{status}, stderr: #{err}" unless status.success?
+    out
+  end
+
+  def self.remote_packages
+    pkg('rquery', '%n').split
+  end
+
+  def self.local_packages
+    pkg('query', '%n').split
+  end
+
+  def self.pkg_plist(which = '-a')
+    out = pkg('info', '-l', *which)
+    pkg_to_plist = {}
+
+    out.split(/^(?=\S)/).each do |pkg_files|
+      pkg, files = pkg_files.split(":", 2)
+
+      pkg_to_plist[pkg] = files.split("\n\t").map(&:strip).reject(&:empty?)
+    end
+
+    pkg_to_plist
+  end
+
+  def self.defunct_packages
+    local_packages - remote_packages
+  end
+end
+
+class Pkgdb
+  def initialize
+    @pkg_files = Concurrently.new(threads: 4) do |pkgs|
+      Pkg.pkg_plist(pkgs)
+    end.each(Pkg.local_packages.each_slice(32)).reduce({}, :merge)
+
+    @file_to_pkg = {}
+    @pkg_files.each do |pkg, files|
+      files.each do |file|
+        @file_to_pkg[file] = pkg
+      end
+    end
+  end
+
+  def pkg_for_file(file)
+    @file_to_pkg[file]
+  end
+
+  def each_pkg_file(&block)
+    @pkg_files.each(&block)
+  end
+
+  def files_for_pkg(pkg)
+    @pkg_files[pkg]
+  end
+
+  def each_file_pkg(&block)
+    @file_to_pkg.each(&block)
+  end
+
+  def each_file(&block)
+    @file_to_pkg.each_key(&block)
+  end
+end
+
+module Commands
+  def self.help
+    puts " #{$0} #{[self.methods(false).join(', ')]}
+
+defunct:
+
+  List local packages that are not available from remote repositories.
+
+unpackaged:
+
+  List files in PREFIX that are not provided by any installed package.
+
+libcheck:
+
+  Check for packaged files that link against unpackaged, compat, or obsolete
+  libraries."
+  end
+
+  def self.defunct
+    puts Pkg.defunct_packages
+  end
+
+  def self.unpackaged
+    require 'find'
+
+    pkgdb = Pkgdb.new
+
+    Find.find(PREFIX) do |f|
+      if IGNORE_UNPACKAGED.any? { |ign| File.fnmatch(ign, f) }
+        Find.prune
+      elsif File.file?(f) && !pkgdb.pkg_for_file(f)
+        puts f
+      end
+    end
+  end
+
+  def self.libcheck
+    pkgdb = Pkgdb.new
+
+    pkg_libs = Hash.new {|h,k| h[k] = [] }
+    pkgdb.each_file_pkg do |f, pkg|
+      if f =~ /\.so(\.\d+)*/
+        pkg_libs[File.basename(f)] << [pkg, f]
+      end
+    end
+
+    defunct = Pkg.defunct_packages
+
+    Concurrently.new(threads: CONCURRENCY) do |exes|
+      Ldd.libs(exes.reject { |f| IGNORE_LLD.any? { |ign| File.fnmatch(ign, f) } })
+    end.each(pkgdb.each_file.each_slice(16)) do |batch|
+      batch.each do |exe, libs|
+        pkg = pkgdb.pkg_for_file(exe)
+
+        libs.each do |lib|
+          lib_pkg = pkgdb.pkg_for_file(lib.path)
+
+          if lib.path == Ldd::NOT_FOUND
+            if (src = pkg_libs.fetch(lib.name, false))
+              # if the lib is in this package, assume all is well
+              unless src.any? { |spkg, path| spkg == pkg }
+                puts "#{pkg}: #{exe} private library #{lib.name} => #{src.map{|s| s.join(' => ')}.join(', ')}?"
+              end
+            else
+              puts "#{pkg}: #{exe} missing library #{lib.name}"
+            end
+          elsif lib.path.include?("compat/") && lib_pkg != pkg
+            puts "#{pkg}: #{exe} using compat library #{lib.path}"
+          elsif lib.path.start_with?(PREFIX) && lib_pkg.nil?
+            puts "#{pkg}: #{exe} using unpackaged library #{lib.path}"
+          elsif defunct.include?(lib_pkg)
+            puts "#{pkg}: #{exe} using defunct packaged library #{lib.path} from #{lib_pkg}"
+          end
+        end
+      end
+    end
+  end
+end
+
+if $0 == __FILE__
+  commands = Commands.methods(false)
+  if ARGV.size == 1 && commands.include?(ARGV.first.to_sym)
+    Commands.send(ARGV.first.to_sym)
+  else
+    Commands.help
+    exit 1
+  end
+end
