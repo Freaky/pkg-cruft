@@ -4,24 +4,83 @@
 require 'open3'
 require 'find'
 
+prefix = ENV.fetch('PREFIX', '/usr/local')
+concurrency = ENV.fetch('CONCURRENCY', 16).to_i.clamp(1, 32)
+
+trap(:INT) do
+  puts "Interrupt"
+  exit! 2
+end
+
+Thread.abort_on_exception = true
+
+class Concurrently
+  def initialize(threads: 2, &job)
+    @job = job
+    @threads = Integer(threads)
+  end
+
+  def each(input)
+    return enum_for(:each, input) unless block_given?
+
+    inq = SizedQueue.new(@threads * 4)
+    outq = SizedQueue.new(@threads * 4)
+
+    pool = @threads.times.map do
+      Thread.new do
+        begin
+          while (work = inq.deq)
+            outq.enq @job.call(work)
+          end
+        ensure
+          outq.enq Thread.current
+        end
+      end
+    end
+
+    ingest = Thread.new do
+      input.each { |i| inq.enq i }
+      inq.close
+    end
+
+    until pool.empty?
+      case (res = outq.deq)
+      when Thread then pool.delete(res).join
+      else yield res
+      end
+    end
+
+    ingest.join
+  end
+end
+
 module Ldd
   Lib = Struct.new(:name, :path)
   NOT_FOUND = Class.new
 
-  def self.libs(exe)
-    out, err, status = Open3.capture3('/usr/bin/ldd', '-f', '%o %p\n', exe)
+  # def self.libs(exe)
+  #   out, _err, status = Open3.capture3('/usr/bin/ldd', '-f', '%o %p\n', exe)
 
-    unless status.success?
-      # warn "ldd exited #{status}, stderr: #{err}"
-    end
+  #   out.lines.map { |line| line.chomp.split(" ", 2) }.map do |lib, path|
+  #     if path == 'not found'
+  #       path = NOT_FOUND
+  #     else
+  #       path = File.absolute_path(path)
+  #     end
+  #     Lib.new(lib, path)
+  #   end
+  # end
 
-    out.lines.map { |line| line.chomp.split(" ", 2) }.map do |lib, path|
-      if path == 'not found'
-        path = NOT_FOUND
-      else
-        path = File.absolute_path(path)
-      end
-      Lib.new(lib, path)
+  def self.libs(bins)
+    out, _err, status = Open3.capture3('/usr/bin/ldd', '-f', '%A %o %p\n', *bins)
+
+    out.lines
+      .map { |line| line.chomp.split(" ", 3) }
+      .group_by(&:first)
+      .transform_values do |v|
+        v.map do |_exe, lib, path|
+          Lib.new(lib, path == 'not found' ? NOT_FOUND : File.absolute_path(path))
+        end
     end
   end
 end
@@ -61,19 +120,16 @@ end
 
 ELF_MAGIC = "\x7fELF"
 
-def elf?(file)
-  File.read(file, ELF_MAGIC.size) == ELF_MAGIC
-rescue => e
-  # warn e
+defunct = Pkg.defunct_packages
+if defunct.any?
+  puts "WARNING: Local packages not in remote repositories: #{defunct.join ', '}"
 end
 
-puts "Local packages not in remote repositories:"
-puts Pkg.defunct_packages
-puts
-
 puts "Reading package lists..."
+pkg_files = Concurrently.new(threads: concurrency) do |pkgs|
+  Pkg.pkg_plist(pkgs)
+end.each(Pkg.local_packages.each_slice(32)).reduce({}, :merge)
 
-pkg_files = Pkg.pkg_plist
 file_to_pkg = {}
 pkg_files.each do |pkg, files|
   files.each do |file|
@@ -90,35 +146,32 @@ end
 
 puts "Loaded #{file_to_pkg.size} files in #{pkg_files.size} packages"
 
-puts "Gathering executables..."
-executables = file_to_pkg.keys.select { |file| elf?(file) }
-
-prefix = '/usr/local'
-puts "Found #{executables.size} executables"
 puts "Searching for uses of obsolete libraries..."
-executables.each do |exe|
-  libs = Ldd.libs(exe)
-  pkg = file_to_pkg[exe]
 
-  libs.each do |lib|
-    if lib.path == Ldd::NOT_FOUND
-      if (src = pkg_libs.fetch(lib.name, false))
-        # if the lib is in this package, assume all is well
-        unless src.any? { |spkg, path| spkg == pkg }
-          puts "#{pkg}: #{exe} private library #{lib.name} => #{src.map{|s| s.join(' => ')}.join(', ')}?"
+Concurrently.new(threads: concurrency) do |exes|
+  Ldd.libs(exes)
+end.each(file_to_pkg.keys.each_slice(16)) do |batch|
+  batch.each do |exe, libs|
+    pkg = file_to_pkg[exe]
+
+    libs.each do |lib|
+      if lib.path == Ldd::NOT_FOUND
+        if (src = pkg_libs.fetch(lib.name, false))
+          # if the lib is in this package, assume all is well
+          unless src.any? { |spkg, path| spkg == pkg }
+            puts "#{pkg}: #{exe} private library #{lib.name} => #{src.map{|s| s.join(' => ')}.join(', ')}?"
+          end
+        else
+          puts "#{pkg}: #{exe} missing library #{lib.name}"
         end
-      else
-        puts "#{pkg}: #{exe} missing library #{lib.name}"
+      elsif lib.path.include?("compat/") && file_to_pkg[lib.path] != pkg
+        puts "#{pkg}: #{exe} using compat library #{lib.path}"
+      elsif lib.path.start_with?(prefix) && !file_to_pkg.key?(lib.path)
+        puts "#{pkg}: #{exe} using unpackaged library #{lib.path}"
       end
-    elsif lib.path.include?("compat/") && file_to_pkg[lib.path] != pkg
-      puts "#{pkg}: #{exe} using compat library #{lib.path}"
-    elsif lib.path.start_with?(prefix) && !file_to_pkg.key?(lib.path)
-      puts "#{pkg}: #{exe} using unpackaged library #{lib.path}"
     end
   end
 end
-
-exit
 
 ignore = %w(www/* poudriere/* varnish/*).map{|pat| File.join(prefix, pat) }
 puts "Searching for unpackaged files in #{prefix}"
