@@ -104,6 +104,41 @@ module Pkg
   end
 end
 
+class Pkgdb
+  def initialize
+    @pkg_files = Concurrently.new(threads: CONCURRENCY) do |pkgs|
+      Pkg.pkg_plist(pkgs)
+    end.each(Pkg.local_packages.each_slice(32)).reduce({}, :merge)
+
+    @file_to_pkg = {}
+    @pkg_files.each do |pkg, files|
+      files.each do |file|
+        @file_to_pkg[file] = pkg
+      end
+    end
+  end
+
+  def pkg_for_file(file)
+    @file_to_pkg[file]
+  end
+
+  def each_pkg_file(&block)
+    @pkg_files.each(&block)
+  end
+
+  def files_for_pkg(pkg)
+    @pkg_files[pkg]
+  end
+
+  def each_file_pkg(&block)
+    @file_to_pkg.each(&block)
+  end
+
+  def each_file(&block)
+    @file_to_pkg.each_key(&block)
+  end
+end
+
 module Commands
   def self.help
     puts " #{$0} #{[self.methods(false).join(', ')]}
@@ -129,42 +164,35 @@ libcheck:
   def self.unpackaged
     require 'find'
 
-    pkg_files = Concurrently.new(threads: CONCURRENCY) do |pkgs|
-      Pkg.pkg_plist(pkgs)
-    end.each(Pkg.local_packages.each_slice(32)).reduce({}, :merge)
+    pkgdb = Pkgdb.new
 
-    file_to_pkg = {}
-    pkg_files.each do |pkg, files|
-      files.each do |file|
-        file_to_pkg[file] = pkg
-      end
-    end
+    # pkg_files = Concurrently.new(threads: CONCURRENCY) do |pkgs|
+    #   Pkg.pkg_plist(pkgs)
+    # end.each(Pkg.local_packages.each_slice(32)).reduce({}, :merge)
+
+    # file_to_pkg = {}
+    # pkg_files.each do |pkg, files|
+    #   files.each do |file|
+    #     file_to_pkg[file] = pkg
+    #   end
+    # end
 
     ignore = %w(www/* poudriere/* varnish/*).map{|pat| File.join(PREFIX, pat) }
 
     Find.find(PREFIX) do |f|
       if ignore.any? { |ign| File.fnmatch(ign, f) }
         Find.prune
-      elsif File.file?(f) && !file_to_pkg[f]
+      elsif File.file?(f) && !pkgdb.pkg_for_file(f)
         puts f
       end
     end
   end
 
   def self.libcheck
-    pkg_files = Concurrently.new(threads: CONCURRENCY) do |pkgs|
-      Pkg.pkg_plist(pkgs)
-    end.each(Pkg.local_packages.each_slice(32)).reduce({}, :merge)
-
-    file_to_pkg = {}
-    pkg_files.each do |pkg, files|
-      files.each do |file|
-        file_to_pkg[file] = pkg
-      end
-    end
+    pkgdb = Pkgdb.new
 
     pkg_libs = Hash.new {|h,k| h[k] = [] }
-    file_to_pkg.each do |f, pkg|
+    pkgdb.each_file_pkg.each do |f, pkg|
       if f =~ /\.so(\.\d+)*/
         pkg_libs[File.basename(f)] << [pkg, f]
       end
@@ -173,9 +201,9 @@ libcheck:
     defunct = Pkg.defunct_packages
     Concurrently.new(threads: CONCURRENCY) do |exes|
       Ldd.libs(exes)
-    end.each(file_to_pkg.keys.each_slice(16)) do |batch|
+    end.each(pkgdb.each_file.each_slice(16)) do |batch|
       batch.each do |exe, libs|
-        pkg = file_to_pkg[exe]
+        pkg = pkgdb.pkg_for_file(exe)
 
         libs.each do |lib|
           if lib.path == Ldd::NOT_FOUND
@@ -187,11 +215,11 @@ libcheck:
             else
               puts "#{pkg}: #{exe} missing library #{lib.name}"
             end
-          elsif lib.path.include?("compat/") && file_to_pkg[lib.path] != pkg
+          elsif lib.path.include?("compat/") && pkgdb.pkg_for_file(lib.path) != pkg
             puts "#{pkg}: #{exe} using compat library #{lib.path}"
-          elsif lib.path.start_with?(PREFIX) && !file_to_pkg.key?(lib.path)
+          elsif lib.path.start_with?(PREFIX) && !pkgdb.pkg_for_file(lib.path)
             puts "#{pkg}: #{exe} using unpackaged library #{lib.path}"
-          elsif defunct.include?(file_to_pkg[lib.path])
+          elsif defunct.include?(pkgdb.pkg_for_file(lib.path))
             puts "#{pkg}: #{exe} using defunct packaged library #{lib.path} from #{file_to_pkg[lib.path]}"
           end
         end
