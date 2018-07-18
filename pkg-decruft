@@ -2,10 +2,9 @@
 # frozen_string_literal: true
 
 require 'open3'
-require 'find'
 
-prefix = ENV.fetch('PREFIX', '/usr/local')
-concurrency = ENV.fetch('CONCURRENCY', 16).to_i.clamp(1, 32)
+PREFIX = ENV.fetch('PREFIX', '/usr/local')
+CONCURRENCY = ENV.fetch('CONCURRENCY', 16).to_i.clamp(1, 32)
 
 trap(:INT) do
   puts "Interrupt"
@@ -105,68 +104,108 @@ module Pkg
   end
 end
 
-ELF_MAGIC = "\x7fELF"
+module Commands
+  def self.help
+    puts " #{$0} #{[self.methods(false).join(', ')]}
 
-defunct = Pkg.defunct_packages
-if defunct.any?
-  puts "WARNING: Local packages not in remote repositories: #{defunct.join ', '}"
-end
+defunct:
 
-puts "Reading package lists..."
-pkg_files = Concurrently.new(threads: concurrency) do |pkgs|
-  Pkg.pkg_plist(pkgs)
-end.each(Pkg.local_packages.each_slice(32)).reduce({}, :merge)
+  List local packages that are not available from remote repositories.
 
-file_to_pkg = {}
-pkg_files.each do |pkg, files|
-  files.each do |file|
-    file_to_pkg[file] = pkg
+unpackaged:
+
+  List files in PREFIX that are not provided by any installed package.
+
+libcheck:
+
+  Check for packaged files that link against unpackaged, compat, or obsolete
+  libraries."
   end
-end
 
-pkg_libs = Hash.new {|h,k| h[k] = [] }
-file_to_pkg.each do |f, pkg|
-  if f =~ /\.so(\.\d+)*/
-    pkg_libs[File.basename(f)] << [pkg, f]
+  def self.defunct
+    puts Pkg.defunct_packages
   end
-end
 
-puts "Loaded #{file_to_pkg.size} files in #{pkg_files.size} packages"
+  def self.unpackaged
+    require 'find'
 
-puts "Searching for uses of obsolete libraries..."
+    pkg_files = Concurrently.new(threads: CONCURRENCY) do |pkgs|
+      Pkg.pkg_plist(pkgs)
+    end.each(Pkg.local_packages.each_slice(32)).reduce({}, :merge)
 
-Concurrently.new(threads: concurrency) do |exes|
-  Ldd.libs(exes)
-end.each(file_to_pkg.keys.each_slice(16)) do |batch|
-  batch.each do |exe, libs|
-    pkg = file_to_pkg[exe]
+    file_to_pkg = {}
+    pkg_files.each do |pkg, files|
+      files.each do |file|
+        file_to_pkg[file] = pkg
+      end
+    end
 
-    libs.each do |lib|
-      if lib.path == Ldd::NOT_FOUND
-        if (src = pkg_libs.fetch(lib.name, false))
-          # if the lib is in this package, assume all is well
-          unless src.any? { |spkg, path| spkg == pkg }
-            puts "#{pkg}: #{exe} private library #{lib.name} => #{src.map{|s| s.join(' => ')}.join(', ')}?"
+    ignore = %w(www/* poudriere/* varnish/*).map{|pat| File.join(PREFIX, pat) }
+
+    Find.find(PREFIX) do |f|
+      if ignore.any? { |ign| File.fnmatch(ign, f) }
+        Find.prune
+      elsif File.file?(f) && !file_to_pkg[f]
+        puts f
+      end
+    end
+  end
+
+  def self.libcheck
+    pkg_files = Concurrently.new(threads: CONCURRENCY) do |pkgs|
+      Pkg.pkg_plist(pkgs)
+    end.each(Pkg.local_packages.each_slice(32)).reduce({}, :merge)
+
+    file_to_pkg = {}
+    pkg_files.each do |pkg, files|
+      files.each do |file|
+        file_to_pkg[file] = pkg
+      end
+    end
+
+    pkg_libs = Hash.new {|h,k| h[k] = [] }
+    file_to_pkg.each do |f, pkg|
+      if f =~ /\.so(\.\d+)*/
+        pkg_libs[File.basename(f)] << [pkg, f]
+      end
+    end
+
+    defunct = Pkg.defunct_packages
+    Concurrently.new(threads: CONCURRENCY) do |exes|
+      Ldd.libs(exes)
+    end.each(file_to_pkg.keys.each_slice(16)) do |batch|
+      batch.each do |exe, libs|
+        pkg = file_to_pkg[exe]
+
+        libs.each do |lib|
+          if lib.path == Ldd::NOT_FOUND
+            if (src = pkg_libs.fetch(lib.name, false))
+              # if the lib is in this package, assume all is well
+              unless src.any? { |spkg, path| spkg == pkg }
+                puts "#{pkg}: #{exe} private library #{lib.name} => #{src.map{|s| s.join(' => ')}.join(', ')}?"
+              end
+            else
+              puts "#{pkg}: #{exe} missing library #{lib.name}"
+            end
+          elsif lib.path.include?("compat/") && file_to_pkg[lib.path] != pkg
+            puts "#{pkg}: #{exe} using compat library #{lib.path}"
+          elsif lib.path.start_with?(PREFIX) && !file_to_pkg.key?(lib.path)
+            puts "#{pkg}: #{exe} using unpackaged library #{lib.path}"
+          elsif defunct.include?(file_to_pkg[lib.path])
+            puts "#{pkg}: #{exe} using defunct packaged library #{lib.path} from #{file_to_pkg[lib.path]}"
           end
-        else
-          puts "#{pkg}: #{exe} missing library #{lib.name}"
         end
-      elsif lib.path.include?("compat/") && file_to_pkg[lib.path] != pkg
-        puts "#{pkg}: #{exe} using compat library #{lib.path}"
-      elsif lib.path.start_with?(prefix) && !file_to_pkg.key?(lib.path)
-        puts "#{pkg}: #{exe} using unpackaged library #{lib.path}"
       end
     end
   end
 end
 
-ignore = %w(www/* poudriere/* varnish/*).map{|pat| File.join(prefix, pat) }
-puts "Searching for unpackaged files in #{prefix}"
-
-Find.find(prefix) do |f|
-  if ignore.any? { |ign| File.fnmatch(ign, f) }
-    Find.prune
-  elsif File.file?(f) && !file_to_pkg[f]
-    puts f
+if $0 == __FILE__
+  commands = Commands.methods(false)
+  if ARGV.size == 1 && commands.include?(ARGV.first.to_sym)
+    exit Commands.send(ARGV.first.to_sym).to_i
+  else
+    Commands.help
+    exit 1
   end
 end
