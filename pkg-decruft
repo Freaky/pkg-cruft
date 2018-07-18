@@ -60,7 +60,7 @@ class Concurrently
     end
 
     ingest = Thread.new do
-      input.each { |i| inq.enq i }
+      input.each { |i| inq.enq(i) unless i.nil? }
       inq.close
     end
 
