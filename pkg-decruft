@@ -203,7 +203,7 @@ end
 if $0 == __FILE__
   commands = Commands.methods(false)
   if ARGV.size == 1 && commands.include?(ARGV.first.to_sym)
-    exit Commands.send(ARGV.first.to_sym).to_i
+    Commands.send(ARGV.first.to_sym)
   else
     Commands.help
     exit 1
