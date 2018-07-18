@@ -166,17 +166,6 @@ libcheck:
 
     pkgdb = Pkgdb.new
 
-    # pkg_files = Concurrently.new(threads: CONCURRENCY) do |pkgs|
-    #   Pkg.pkg_plist(pkgs)
-    # end.each(Pkg.local_packages.each_slice(32)).reduce({}, :merge)
-
-    # file_to_pkg = {}
-    # pkg_files.each do |pkg, files|
-    #   files.each do |file|
-    #     file_to_pkg[file] = pkg
-    #   end
-    # end
-
     ignore = %w(www/* poudriere/* varnish/*).map{|pat| File.join(PREFIX, pat) }
 
     Find.find(PREFIX) do |f|
@@ -192,13 +181,14 @@ libcheck:
     pkgdb = Pkgdb.new
 
     pkg_libs = Hash.new {|h,k| h[k] = [] }
-    pkgdb.each_file_pkg.each do |f, pkg|
+    pkgdb.each_file_pkg do |f, pkg|
       if f =~ /\.so(\.\d+)*/
         pkg_libs[File.basename(f)] << [pkg, f]
       end
     end
 
     defunct = Pkg.defunct_packages
+
     Concurrently.new(threads: CONCURRENCY) do |exes|
       Ldd.libs(exes)
     end.each(pkgdb.each_file.each_slice(16)) do |batch|
@@ -206,6 +196,8 @@ libcheck:
         pkg = pkgdb.pkg_for_file(exe)
 
         libs.each do |lib|
+          lib_pkg = pkgdb.pkg_for_file(lib.path)
+
           if lib.path == Ldd::NOT_FOUND
             if (src = pkg_libs.fetch(lib.name, false))
               # if the lib is in this package, assume all is well
@@ -215,12 +207,12 @@ libcheck:
             else
               puts "#{pkg}: #{exe} missing library #{lib.name}"
             end
-          elsif lib.path.include?("compat/") && pkgdb.pkg_for_file(lib.path) != pkg
+          elsif lib.path.include?("compat/") && lib_pkg != pkg
             puts "#{pkg}: #{exe} using compat library #{lib.path}"
-          elsif lib.path.start_with?(PREFIX) && !pkgdb.pkg_for_file(lib.path)
+          elsif lib.path.start_with?(PREFIX) && lib_pkg.nil?
             puts "#{pkg}: #{exe} using unpackaged library #{lib.path}"
-          elsif defunct.include?(pkgdb.pkg_for_file(lib.path))
-            puts "#{pkg}: #{exe} using defunct packaged library #{lib.path} from #{file_to_pkg[lib.path]}"
+          elsif defunct.include?(lib_pkg)
+            puts "#{pkg}: #{exe} using defunct packaged library #{lib.path} from #{lib_pkg}"
           end
         end
       end
