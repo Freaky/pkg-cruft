@@ -1,0 +1,132 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'open3'
+require 'find'
+
+module Ldd
+  Lib = Struct.new(:name, :path)
+  NOT_FOUND = Class.new
+
+  def self.libs(exe)
+    out, err, status = Open3.capture3('/usr/bin/ldd', '-f', '%o %p\n', exe)
+
+    unless status.success?
+      # warn "ldd exited #{status}, stderr: #{err}"
+    end
+
+    out.lines.map { |line| line.chomp.split(" ", 2) }.map do |lib, path|
+      if path == 'not found'
+        path = NOT_FOUND
+      else
+        path = File.absolute_path(path)
+      end
+      Lib.new(lib, path)
+    end
+  end
+end
+
+module Pkg
+  def self.pkg(*args)
+    out, err, status = Open3.capture3('/usr/sbin/pkg', *args)
+    raise "pkg exited #{status}, stderr: #{err}" unless status.success?
+    out
+  end
+
+  def self.remote_packages
+    pkg('rquery', '%n').split
+  end
+
+  def self.local_packages
+    pkg('query', '%n').split
+  end
+
+  def self.pkg_plist(which = '-a')
+    out = pkg('info', '-l', *which)
+    pkg_to_plist = {}
+
+    out.split(/^(?=\S)/).each do |pkg_files|
+      pkg, files = pkg_files.split(":", 2)
+
+      pkg_to_plist[pkg] = files.split("\n\t").map(&:strip).reject(&:empty?)
+    end
+
+    pkg_to_plist
+  end
+
+  def self.defunct_packages
+    local_packages - remote_packages
+  end
+end
+
+ELF_MAGIC = "\x7fELF"
+
+def elf?(file)
+  File.read(file, ELF_MAGIC.size) == ELF_MAGIC
+rescue => e
+  # warn e
+end
+
+puts "Local packages not in remote repositories:"
+puts Pkg.defunct_packages
+puts
+
+puts "Reading package lists..."
+
+pkg_files = Pkg.pkg_plist
+file_to_pkg = {}
+pkg_files.each do |pkg, files|
+  files.each do |file|
+    file_to_pkg[file] = pkg
+  end
+end
+
+pkg_libs = Hash.new {|h,k| h[k] = [] }
+file_to_pkg.each do |f, pkg|
+  if f =~ /\.so(\.\d+)*/
+    pkg_libs[File.basename(f)] << [pkg, f]
+  end
+end
+
+puts "Loaded #{file_to_pkg.size} files in #{pkg_files.size} packages"
+
+puts "Gathering executables..."
+executables = file_to_pkg.keys.select { |file| elf?(file) }
+
+prefix = '/usr/local'
+puts "Found #{executables.size} executables"
+puts "Searching for uses of obsolete libraries..."
+executables.each do |exe|
+  libs = Ldd.libs(exe)
+  pkg = file_to_pkg[exe]
+
+  libs.each do |lib|
+    if lib.path == Ldd::NOT_FOUND
+      if (src = pkg_libs.fetch(lib.name, false))
+        # if the lib is in this package, assume all is well
+        unless src.any? { |spkg, path| spkg == pkg }
+          puts "#{pkg}: #{exe} private library #{lib.name} => #{src.map{|s| s.join(' => ')}.join(', ')}?"
+        end
+      else
+        puts "#{pkg}: #{exe} missing library #{lib.name}"
+      end
+    elsif lib.path.include?("compat/") && file_to_pkg[lib.path] != pkg
+      puts "#{pkg}: #{exe} using compat library #{lib.path}"
+    elsif lib.path.start_with?(prefix) && !file_to_pkg.key?(lib.path)
+      puts "#{pkg}: #{exe} using unpackaged library #{lib.path}"
+    end
+  end
+end
+
+exit
+
+ignore = %w(www/* poudriere/* varnish/*).map{|pat| File.join(prefix, pat) }
+puts "Searching for unpackaged files in #{prefix}"
+
+Find.find(prefix) do |f|
+  if ignore.any? { |ign| File.fnmatch(ign, f) }
+    Find.prune
+  elsif File.file?(f) && !file_to_pkg[f]
+    puts f
+  end
+end
