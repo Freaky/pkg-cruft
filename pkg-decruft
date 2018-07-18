@@ -58,19 +58,6 @@ module Ldd
   Lib = Struct.new(:name, :path)
   NOT_FOUND = Class.new
 
-  # def self.libs(exe)
-  #   out, _err, status = Open3.capture3('/usr/bin/ldd', '-f', '%o %p\n', exe)
-
-  #   out.lines.map { |line| line.chomp.split(" ", 2) }.map do |lib, path|
-  #     if path == 'not found'
-  #       path = NOT_FOUND
-  #     else
-  #       path = File.absolute_path(path)
-  #     end
-  #     Lib.new(lib, path)
-  #   end
-  # end
-
   def self.libs(bins)
     out, _err, status = Open3.capture3('/usr/bin/ldd', '-f', '%A %o %p\n', *bins)
 
