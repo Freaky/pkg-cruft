@@ -170,7 +170,7 @@ end
 
 module Commands
   def self.help
-    puts " #{$0} #{[self.methods(false).join(', ')]}
+    puts " #{$0} [ #{self.methods(false).join(' | ')} ]
 
 defunct:
 
