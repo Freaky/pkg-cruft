@@ -87,7 +87,7 @@ module Ldd
   NOT_FOUND = Class.new
 
   def self.libs(bins)
-    out, _err, status = Open3.capture3('/usr/bin/ldd', '-f', '%A %o %p\n', *bins)
+    out, _err, _status = Open3.capture3('/usr/bin/ldd', '-f', '%A %o %p\n', *bins)
 
     out.lines
       .map { |line| line.chomp.split(" ", 3) }
