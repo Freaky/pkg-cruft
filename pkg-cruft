@@ -42,6 +42,35 @@ end
 
 Thread.abort_on_exception = true
 
+# Stupidly simple futures - run the passed block in the background, return the
+# result in +value+, blocking if necessary. Pass through method calls via
+# method_missing to make it easy to swap in.
+class Futur
+  def initialize(&block)
+    @mutex = Mutex.new
+    @thread = Thread.new do
+      @mutex.synchronize do
+        @value = yield
+      end
+    end
+  end
+
+  def value
+    @mutex.synchronize do
+      if @thread
+        @thread.join
+        @thread = nil
+      end
+
+      @value
+    end
+  end
+
+  def method_missing(meth, *args, &block)
+    value.__send__(meth, *args, &block)
+  end
+end
+
 # Super-simple concurrency; initialize with a thread-safe block, and call
 # each with an Enumerable and block to run in the current thread with each
 # result.
@@ -282,7 +311,7 @@ checkrestart:
   PsExe = Struct.new(:pid, :name, :osrel, :path)
 
   def self.checkrestart
-    pkgdb = Pkgdb.new
+    pkgdb = Futur.new { Pkgdb.new }
 
     procvm, _err, _status = Open3.capture3('/usr/bin/procstat', '-hav')
     procs = procvm.lines.map do |line|
