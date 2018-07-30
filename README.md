@@ -57,10 +57,10 @@ Run as root to check all running processes.  False-positives are possible.
 
 ```
 # pkg-cruft checkrestart
-/home/freaky/.rbenv/versions/2.4.4/bin/ruby (unpackaged) running as 61068 (ruby)
-/usr/local/bin/mosh-client (mosh-1.3.2_4) running as 59229 (mosh-client)
-/usr/local/bin/perl5 (perl5-5.26.2) running as 21795 (perl)
-/usr/local/bin/postgres (postgresql96-server-9.6.9_1) running as 36363 (postgres)
+[MISSING EXECUTABLE] (tmux-2.7)? running as 17319 (tmux)
+[MISSING EXECUTABLE] (zsh-5.5.1)? running as 20115 (zsh)
+[MISSING EXECUTABLE] (weechat-2.2)? running as 36747 (weechat)
+/usr/local/bin/mosh-server (mosh-1.3.2_4) running as 53815 (mosh-server)
 ```
 
 ## Configuration
