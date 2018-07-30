@@ -238,6 +238,7 @@ checkrestart:
   end
 
   def self.libcheck
+    pkgdb = Pkgdb.new
 
     pkg_libs = Hash.new { |h, k| h[k] = [] }
     pkgdb.each_file_pkg do |f, pkg|
