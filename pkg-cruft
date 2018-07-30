@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
-#
+
 # The MIT License (MIT)
 #
 # Copyright (c) 2018 Thomas Hurst <tom@hur.st>
@@ -30,18 +30,23 @@ PREFIX = ENV.fetch('PREFIX', '/usr/local')
 CONCURRENCY = ENV.fetch('CONCURRENCY', 16).to_i.clamp(1, 32)
 
 IGNORE_UNPACKAGED = ENV.fetch('IGNORE_UNPACKAGED', 'www/*:poudriere/*:varnish/*')
-                       .split(':').map{|pat| File.join(PREFIX, pat) }
+                       .split(':').map { |pat| File.join(PREFIX, pat) }
 
 IGNORE_LLD = ENV.fetch('IGNORE_LDD', 'go/src/*/testdata/*')
-                .split(':').map{|pat| File.join(PREFIX, pat) }
+                .split(':').map { |pat| File.join(PREFIX, pat) }
 
 trap(:INT) do
-  puts "Interrupt"
+  puts 'Interrupt'
   exit! 2
 end
 
 Thread.abort_on_exception = true
 
+# Super-simple concurrency; initialize with a thread-safe block, and call
+# each with an Enumerable and block to run in the current thread with each
+# result.
+#
+# nils are silently ignored.
 class Concurrently
   def initialize(threads: 2, &job)
     @job = job
@@ -54,7 +59,7 @@ class Concurrently
     inq = SizedQueue.new(@threads * 4)
     outq = SizedQueue.new(@threads * 4)
 
-    pool = @threads.times.map do
+    pool = Array.new(@threads).map do
       Thread.new do
         begin
           while (work = inq.deq)
@@ -82,6 +87,8 @@ class Concurrently
   end
 end
 
+# List libraries required by a given set of executables, ignoring errors,
+# grouping results by executable.
 module Ldd
   Lib = Struct.new(:name, :path)
   NOT_FOUND = Class.new
@@ -89,8 +96,9 @@ module Ldd
   def self.libs(bins)
     out, _err, _status = Open3.capture3('/usr/bin/ldd', '-f', '%A %o %p\n', *bins)
 
-    out.lines
-      .map { |line| line.chomp.split(" ", 3) }
+    out
+      .lines
+      .map { |line| line.chomp.split('', 3) }
       .group_by(&:first)
       .transform_values do |v|
         v.map do |_exe, lib, path|
@@ -100,6 +108,7 @@ module Ldd
   end
 end
 
+# Thin wrapper around pkgng
 module Pkg
   def self.pkg(*args)
     out, err, status = Open3.capture3('/usr/sbin/pkg', *args)
@@ -120,7 +129,7 @@ module Pkg
     pkg_to_plist = {}
 
     out.split(/^(?=\S)/).each do |pkg_files|
-      pkg, files = pkg_files.split(":", 2)
+      pkg, files = pkg_files.split(':', 2)
 
       pkg_to_plist[pkg] = files.split("\n\t").map(&:strip).reject(&:empty?)
     end
@@ -134,10 +143,11 @@ module Pkg
 
   def self.which(file)
     pkg('which', '-q', file).chomp
-  rescue => e
+  rescue
   end
 end
 
+# Caches the package list for quick lookups.
 class Pkgdb
   def initialize
     @pkg_files = Concurrently.new(threads: 4) do |pkgs|
@@ -173,9 +183,10 @@ class Pkgdb
   end
 end
 
+# pkg-cruft itself.
 module Commands
   def self.help
-    puts " #{$0} [ #{self.methods(false).join(' | ')} ]
+    puts " #{$PROGRAM_NAME} [ #{methods(false).join(' | ')} ]
 
 defunct:
 
@@ -218,11 +229,9 @@ checkrestart:
   def self.libcheck
     pkgdb = Pkgdb.new
 
-    pkg_libs = Hash.new {|h,k| h[k] = [] }
+    pkg_libs = Hash.new { |h, k| h[k] = [] }
     pkgdb.each_file_pkg do |f, pkg|
-      if f =~ /\.so(\.\d+)*/
-        pkg_libs[File.basename(f)] << [pkg, f]
-      end
+      pkg_libs[File.basename(f)] << [pkg, f] if /\.so(\.\d+)*/.match?(f)
     end
 
     defunct = Pkg.defunct_packages
@@ -239,13 +248,14 @@ checkrestart:
           if lib.path == Ldd::NOT_FOUND
             if (src = pkg_libs.fetch(lib.name, false))
               # if the lib is in this package, assume all is well
-              unless src.any? { |spkg, path| spkg == pkg }
-                puts "#{pkg}: #{exe} private library #{lib.name} => #{src.map{|s| s.join(' => ')}.join(', ')}?"
+              unless src.any? { |spkg, _path| spkg == pkg }
+                candidates = src.map { |s| s.join(' => ') }.join(', ')
+                puts "#{pkg}: #{exe} private library #{lib.name} => #{candidates}?"
               end
             else
               puts "#{pkg}: #{exe} missing library #{lib.name}"
             end
-          elsif lib.path.include?("compat/") && lib_pkg != pkg
+          elsif lib.path.include?('compat/') && lib_pkg != pkg
             puts "#{pkg}: #{exe} using #{lib_pkg} compat library #{lib.path}"
           elsif lib.path.start_with?(PREFIX) && lib_pkg.nil?
             puts "#{pkg}: #{exe} using unpackaged library #{lib.path}"
@@ -275,7 +285,7 @@ checkrestart:
   end
 end
 
-if $0 == __FILE__
+if $PROGRAM_NAME == __FILE__
   commands = Commands.methods(false)
   if ARGV.size == 1 && commands.include?(ARGV.first.to_sym)
     Commands.send(ARGV.first.to_sym)
