@@ -110,9 +110,11 @@ end
 
 # Thin wrapper around pkgng
 module Pkg
+  Error = Class.new(StandardError)
+
   def self.pkg(*args)
     out, err, status = Open3.capture3('/usr/sbin/pkg', *args)
-    raise "pkg exited #{status}, stderr: #{err}" unless status.success?
+    raise(Error, "pkg exited #{status}, stderr: #{err}") unless status.success?
     out
   end
 
@@ -143,7 +145,7 @@ module Pkg
 
   def self.which(file)
     pkg('which', '-q', file).chomp
-  rescue
+  rescue Error
   end
 end
 
