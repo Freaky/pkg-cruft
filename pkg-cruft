@@ -283,7 +283,6 @@ checkrestart:
 
   def self.checkrestart
     pkgdb = Pkgdb.new
-    basename_to_pkg = pkgdb.each_file_pkg.group_by { |file, _pkg| File.basename(file) }.transform_values { |file_pkg| file_pkg.map(&:last).flatten.uniq }
 
     procvm, _err, _status = Open3.capture3('/usr/bin/procstat', '-hav')
     procs = procvm.lines.map do |line|
