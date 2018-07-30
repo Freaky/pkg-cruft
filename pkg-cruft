@@ -131,6 +131,11 @@ module Pkg
   def self.defunct_packages
     local_packages - remote_packages
   end
+
+  def self.which(file)
+    pkg('which', '-q', file).chomp
+  rescue => e
+  end
 end
 
 class Pkgdb
@@ -183,7 +188,13 @@ unpackaged:
 libcheck:
 
   Check for packaged files that link against unpackaged, compat, or obsolete
-  libraries."
+  libraries.
+
+checkrestart:
+
+  Check for running processes that may require restarting due to replaced
+  executables or libraries.  May produce false-positives and requires root
+  for full operation."
   end
 
   def self.defunct
@@ -235,7 +246,7 @@ libcheck:
               puts "#{pkg}: #{exe} missing library #{lib.name}"
             end
           elsif lib.path.include?("compat/") && lib_pkg != pkg
-            puts "#{pkg}: #{exe} using compat library #{lib.path}"
+            puts "#{pkg}: #{exe} using #{lib_pkg} compat library #{lib.path}"
           elsif lib.path.start_with?(PREFIX) && lib_pkg.nil?
             puts "#{pkg}: #{exe} using unpackaged library #{lib.path}"
           elsif defunct.include?(lib_pkg)
@@ -243,6 +254,23 @@ libcheck:
           end
         end
       end
+    end
+  end
+
+  PsVM = Struct.new(:pid, :start, :end, :prot, :res, :priv_res, :ref, :shadowed, :flags, :type, :path)
+  PsExe = Struct.new(:pid, :name, :osrel, :path)
+
+  def self.checkrestart
+    procs = IO.popen(['/usr/bin/procstat', '-hav'], 'r') do |procstat|
+      procstat.each_line.lazy.map do |line|
+        PsVM.new(*line.chomp.split(/\s+/, 11))
+      end.select { |ps| ps.type == 'vn' && ps.path.empty? }.group_by(&:pid)
+    end
+
+    procs.keys.lazy.map do |pid|
+      PsExe.new(*`procstat -hb #{pid} 2>/dev/null`.chomp.split(/\s+/, 4))
+    end.select(&:pid).sort_by(&:path).each do |pse|
+      puts "#{pse.path} (#{Pkg.which(pse.path) || 'unpackaged'}) running as #{pse.pid} (#{pse.name})"
     end
   end
 end
