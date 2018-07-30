@@ -5,6 +5,7 @@ A small Ruby script for helping deal with cruft on pkgng (FreeBSD etc) systems.
 ## Requirements
 
 * pkgng (tested on FreeBSD 11.2)
+* procstat (for checkrestart)
 * Ruby (tested on 2.4.4 and 2.5.1); no gems used or needed.
 
 ## Synopsis
