@@ -278,7 +278,7 @@ checkrestart:
     end
 
     procs.keys.lazy.map do |pid|
-      PsExe.new(*`procstat -hb #{pid} 2>/dev/null`.chomp.split(/\s+/, 4))
+      PsExe.new(*`/usr/bin/procstat -hb #{Integer(pid)} 2>/dev/null`.chomp.split(/\s+/, 4))
     end.select(&:pid).sort_by(&:path).each do |pse|
       puts "#{pse.path} (#{Pkg.which(pse.path) || 'unpackaged'}) running as #{pse.pid} (#{pse.name})"
     end
