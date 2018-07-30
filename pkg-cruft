@@ -98,7 +98,7 @@ module Ldd
 
     out
       .lines
-      .map { |line| line.chomp.split('', 3) }
+      .map { |line| line.chomp.split(' ', 3) }
       .group_by(&:first)
       .transform_values do |v|
         v.map do |_exe, lib, path|
