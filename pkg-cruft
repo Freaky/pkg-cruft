@@ -299,7 +299,7 @@ checkrestart:
     end.select(&:pid).group_by(&:path).each do |_path,pses|
       pses.each do |pse|
         if pse.path
-          print "#{pse.path} (#{Pkg.which(pse.path) || 'unpackaged'})"
+          print "#{pse.path} (#{pkgdb.pkg_for_file(pse.path) || 'unpackaged'})"
         else
           print '[MISSING EXECUTABLE] '
           candidates = pkgdb.basename_to_pkgs(pse.name)
