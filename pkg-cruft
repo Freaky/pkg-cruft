@@ -183,6 +183,15 @@ class Pkgdb
   def each_file(&block)
     @file_to_pkg.each_key(&block)
   end
+
+  def basename_to_pkgs(bn)
+    @basename_to_pkgs ||= each_file_pkg.group_by { |file, _pkg| File.basename(file) }
+                                       .transform_values do |file_pkg|
+                                         file_pkg.map(&:last).flatten.uniq
+                                       end
+
+    @basename_to_pkgs[bn]
+  end
 end
 
 # pkg-cruft itself.
@@ -229,7 +238,6 @@ checkrestart:
   end
 
   def self.libcheck
-    pkgdb = Pkgdb.new
 
     pkg_libs = Hash.new { |h, k| h[k] = [] }
     pkgdb.each_file_pkg do |f, pkg|
@@ -273,16 +281,36 @@ checkrestart:
   PsExe = Struct.new(:pid, :name, :osrel, :path)
 
   def self.checkrestart
-    procs = IO.popen(['/usr/bin/procstat', '-hav'], 'r') do |procstat|
-      procstat.each_line.lazy.map do |line|
-        PsVM.new(*line.chomp.split(/\s+/, 11))
-      end.select { |ps| ps.type == 'vn' && ps.path.empty? }.group_by(&:pid)
-    end
+    pkgdb = Pkgdb.new
+    basename_to_pkg = pkgdb.each_file_pkg.group_by { |file, _pkg| File.basename(file) }.transform_values { |file_pkg| file_pkg.map(&:last).flatten.uniq }
+
+    procvm, _err, _status = Open3.capture3('/usr/bin/procstat', '-hav')
+    procs = procvm.lines.map do |line|
+      PsVM.new(*line.chomp.split(/\s+/, 11))
+    end.select { |ps| ps.type == 'vn' && ps.path.empty? }.group_by(&:pid)
 
     procs.keys.lazy.map do |pid|
-      PsExe.new(*`/usr/bin/procstat -hb #{Integer(pid)} 2>/dev/null`.chomp.split(/\s+/, 4))
-    end.select(&:pid).sort_by(&:path).each do |pse|
-      puts "#{pse.path} (#{Pkg.which(pse.path) || 'unpackaged'}) running as #{pse.pid} (#{pse.name})"
+      psexe, err, status = Open3.capture3('/usr/bin/procstat', '-hb', pid.to_i.to_s)
+      if /sysctl: kern.proc.pathname/.match?(err)
+        PsExe.new(pid, `ps -o comm= #{pid.to_i}`.chomp, nil, nil)
+      else
+        PsExe.new(*psexe.chomp.split(/\s+/, 4))
+      end
+    end.select(&:pid).group_by(&:path).each do |_path,pses|
+      pses.each do |pse|
+        if pse.path
+          print "#{pse.path} (#{Pkg.which(pse.path) || 'unpackaged'})"
+        else
+          print '[MISSING EXECUTABLE] '
+          candidates = pkgdb.basename_to_pkgs(pse.name)
+          if candidates
+            print "(#{candidates.join(', ')})?"
+          else
+            print '(unknown package)'
+          end
+        end
+        puts " running as #{pse.pid} (#{pse.name})"
+      end
     end
   end
 end
