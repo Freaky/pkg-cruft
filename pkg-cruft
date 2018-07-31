@@ -223,6 +223,31 @@ class Pkgdb
   end
 end
 
+# Thin wrapper around procstat(1)
+module Procstat
+  PROCSTAT_CMD = '/usr/bin/procstat'
+
+  PsVM = Struct.new(:pid, :start, :end, :prot, :res, :priv_res, :ref, :shadowed, :flags, :type, :path)
+  PsExe = Struct.new(:pid, :name, :osrel, :path)
+
+  def self.vm_mappings(what = '-a')
+    procvm, _err, _status = Open3.capture3(PROCSTAT_CMD, '-hv', what.to_s)
+    procs = procvm.lines.map do |line|
+      PsVM.new(*line.chomp.split(/\s+/, 11))
+    end
+  end
+
+  def self.binary(pid)
+    psexe, err, status = Open3.capture3(PROCSTAT_CMD, '-hb', Integer(pid).to_s)
+
+    if /sysctl: kern.proc.pathname/.match?(err)
+      PsExe.new(pid, `ps -o comm= #{pid}`.chomp, nil, nil)
+    else
+      PsExe.new(*psexe.chomp.split(/\s+/, 4))
+    end
+  end
+end
+
 # pkg-cruft itself.
 module Commands
   def self.help
@@ -307,25 +332,16 @@ checkrestart:
     end
   end
 
-  PsVM = Struct.new(:pid, :start, :end, :prot, :res, :priv_res, :ref, :shadowed, :flags, :type, :path)
-  PsExe = Struct.new(:pid, :name, :osrel, :path)
 
   def self.checkrestart
     pkgdb = Futur.new { Pkgdb.new }
 
-    procvm, _err, _status = Open3.capture3('/usr/bin/procstat', '-hav')
-    procs = procvm.lines.map do |line|
-      PsVM.new(*line.chomp.split(/\s+/, 11))
-    end.select { |ps| ps.type == 'vn' && ps.path.empty? }.group_by(&:pid)
+    procs = Procstat.vm_mappings.select { |ps| ps.type == 'vn' && ps.path.empty? }
+                                .group_by(&:pid)
 
     procs.keys.lazy.map do |pid|
-      psexe, err, status = Open3.capture3('/usr/bin/procstat', '-hb', pid.to_i.to_s)
-      if /sysctl: kern.proc.pathname/.match?(err)
-        PsExe.new(pid, `ps -o comm= #{pid.to_i}`.chomp, nil, nil)
-      else
-        PsExe.new(*psexe.chomp.split(/\s+/, 4))
-      end
-    end.select(&:pid).group_by(&:path).each do |_path,pses|
+      Procstat.binary(Integer(pid))
+    end.select(&:pid).group_by(&:path).each do |_path, pses|
       pses.each do |pse|
         if pse.path
           print "#{pse.path} (#{pkgdb.pkg_for_file(pse.path) || 'unpackaged'})"
