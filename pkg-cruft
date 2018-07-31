@@ -332,7 +332,6 @@ checkrestart:
     end
   end
 
-
   def self.checkrestart
     pkgdb = Futur.new { Pkgdb.new }
 
