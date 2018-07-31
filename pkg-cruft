@@ -346,8 +346,8 @@ checkrestart:
         if pse.path
           print "#{pse.path} (#{pkgdb.pkg_for_file(pse.path) || 'unpackaged'})"
         else
-          print '[MISSING EXECUTABLE] '
           candidates = pkgdb.basename_to_pkgs(pse.name)
+          print '[MISSING EXECUTABLE] '
           if candidates
             print "(#{candidates.join(', ')})?"
           else
