@@ -336,7 +336,11 @@ checkrestart:
     pkgdb = Futur.new { Pkgdb.new }
 
     procs = Procstat.vm_mappings
-                    .select { |ps| ps.type == 'vn' && ps.path.empty? }
+                    .select do |ps|
+                      ps.prot[2] == 'x' && # executable mapping
+                      ps.type == 'vn'   && # backed by a vnode
+                      ps.path.empty?       # with no associated file
+                    end
                     .group_by(&:pid)
 
     procs.keys.lazy.map do |pid|
