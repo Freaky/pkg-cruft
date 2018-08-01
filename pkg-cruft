@@ -232,7 +232,7 @@ module Procstat
 
   def self.vm_mappings(what = '-a')
     procvm, _err, _status = Open3.capture3(PROCSTAT_CMD, '-hv', what.to_s)
-    procs = procvm.lines.map do |line|
+    procvm.lines.map do |line|
       PsVM.new(*line.chomp.split(/\s+/, 11))
     end
   end
