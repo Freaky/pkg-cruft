@@ -46,7 +46,7 @@ Thread.abort_on_exception = true
 # result in +value+, blocking if necessary. Pass through method calls via
 # method_missing to make it easy to swap in.
 class Futur
-  def initialize(&block)
+  def initialize
     @mutex = Mutex.new
     @thread = Thread.new do
       @mutex.synchronize do
@@ -213,13 +213,13 @@ class Pkgdb
     @file_to_pkg.each_key(&block)
   end
 
-  def basename_to_pkgs(bn)
+  def basename_to_pkgs(basename)
     @basename_to_pkgs ||= each_file_pkg.group_by { |file, _pkg| File.basename(file) }
                                        .transform_values do |file_pkg|
                                          file_pkg.map(&:last).flatten.uniq
                                        end
 
-    @basename_to_pkgs[bn]
+    @basename_to_pkgs[basename]
   end
 end
 
@@ -238,7 +238,7 @@ module Procstat
   end
 
   def self.binary(pid)
-    psexe, err, status = Open3.capture3(PROCSTAT_CMD, '-hb', Integer(pid).to_s)
+    psexe, err, _status = Open3.capture3(PROCSTAT_CMD, '-hb', Integer(pid).to_s)
 
     if /sysctl: kern.proc.pathname/.match?(err)
       PsExe.new(pid, `ps -o comm= #{pid}`.chomp, nil, nil)
@@ -335,8 +335,9 @@ checkrestart:
   def self.checkrestart
     pkgdb = Futur.new { Pkgdb.new }
 
-    procs = Procstat.vm_mappings.select { |ps| ps.type == 'vn' && ps.path.empty? }
-                                .group_by(&:pid)
+    procs = Procstat.vm_mappings
+                    .select { |ps| ps.type == 'vn' && ps.path.empty? }
+                    .group_by(&:pid)
 
     procs.keys.lazy.map do |pid|
       Procstat.binary(Integer(pid))
