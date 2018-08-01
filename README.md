@@ -16,27 +16,6 @@ A small Ruby script for helping deal with cruft on pkgng (FreeBSD etc) systems.
 
 ## Subcommands:
 
-### defunct
-
-List local packages that are not available from remote repositories.
-
-```
-% pkg-cruft defunct
-bsdpan-Mail-SpamAssassin-CompiledRegexps-body_0
-```
-
-### unpackaged
-
-List files in PREFIX that are not provided by any installed package, ignoring
-files specified in env `IGNORE_UNPACKAGED`.
-
-```
-% pkg-cruft unpackaged
-/usr/local/apache-tomcat-6.0/conf/Catalina/localhost/host-manager.xml
-/usr/local/apache-tomcat-6.0/conf/Catalina/localhost/manager.xml
-...
-```
-
 ### libcheck
 
 Check for packaged files that link against unpackaged, compat, or obsolete
@@ -61,6 +40,27 @@ Run as root to check all running processes.  False-positives are possible.
 [MISSING EXECUTABLE] (zsh-5.5.1)? running as 20115 (zsh)
 [MISSING EXECUTABLE] (weechat-2.2)? running as 36747 (weechat)
 /usr/local/bin/mosh-server (mosh-1.3.2_4) running as 53815 (mosh-server)
+```
+
+### unpackaged
+
+List files in PREFIX that are not provided by any installed package, ignoring
+files specified in env `IGNORE_UNPACKAGED`.
+
+```
+% pkg-cruft unpackaged
+/usr/local/apache-tomcat-6.0/conf/Catalina/localhost/host-manager.xml
+/usr/local/apache-tomcat-6.0/conf/Catalina/localhost/manager.xml
+...
+```
+
+### defunct
+
+List local packages that are not available from remote repositories.
+
+```
+% pkg-cruft defunct
+bsdpan-Mail-SpamAssassin-CompiledRegexps-body_0
 ```
 
 ## Configuration
