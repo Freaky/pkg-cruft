@@ -1,0 +1,110 @@
+.\"
+.\" Copyright (c) 2018 Thomas Hurst <tom@hur.st>
+.\" 
+.\" Permission is hereby granted, free of charge, to any person obtaining a copy
+.\" of this software and associated documentation files (the "Software"), to deal
+.\" in the Software without restriction, including without limitation the rights
+.\" to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+.\" copies of the Software, and to permit persons to whom the Software is
+.\" furnished to do so, subject to the following conditions:
+.\" 
+.\" The above copyright notice and this permission notice shall be included in all
+.\" copies or substantial portions of the Software.
+.\" 
+.\" THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+.\" IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+.\" FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+.\" AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+.\" LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+.\" OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+.\" SOFTWARE.
+.\"
+.Dd $Mdocdate$
+.Dt PKG-CRUFT 8
+.Os
+.Sh NAME
+.Nm pkg-cruft
+.Nd find crufty bits
+.Sh SYNOPSIS
+.Nm
+.Cm checkrestart
+.Nm
+.Cm libcheck
+.Nm
+.Cm unpackaged
+.Nm
+.Cm defunct
+.Sh DESCRIPTION
+The
+.Nm
+utility is intended to help management of
+.Xr pkg 8
+based systems, locating stale packages, libraries, files, and processess that may
+require attention of an administrator, either for correct system operation or
+merely to keep the system tidy.
+.Pp
+.Sh COMMANDS
+.Nm
+is split into a set of subcommands, each to locate a different kind of cruft:
+.Bl -tag -width indent
+.It Ic checkrestart
+Locate processes with missing executables or libraries mapped into their address
+space.
+.It Ic libcheck
+Locate packaged files which link to unpackaged or compat libraries, or local
+packages which no longer exist in remote repositories.
+.It Ic unpackaged
+List all files in
+.Ev PREFIX
+which are not managed by the package system.
+.It Ic defunct
+List all local packages which are not available in remote repositories.
+.Sh ENVIRONMENT
+.Bl -tag -width indent
+.It Ev CONCURRENCY
+In
+.Cm libcheck
+run this many copies of
+.Xr ldd 1
+in parallel, between 1 and 32.  Default 16.
+.Sh EXAMPLES
+.Cm checkrestart
+locating PostgreSQL and Ruby processes linking to old libraries, and a copy of
+Redis that hasn't been restarted since the last upgrade, with a correct guess
+of a package name based on the command name.
+.Pp
+.Dl # pkg-decruft checkrestart
+.Dl /usr/local/bin/postgres (postgresql96-server-9.6.9_1) running as 10886 (postgres)
+.Dl [MISSING EXECUTABLE] (redis-4.0.10_1)? running as 29355 (redis-server)
+.Dl /home/freaky/.rbenv/versions/2.4.4/bin/ruby (unpackaged) running as 61068 (ruby)
+.Pp
+.Cm libcheck
+locating some oddness with FreeBSD's compat packages; compat9x depending on compat10x
+libraries and compat10x missing libssh.so.5.
+.Pp
+.Dl $ pkg-decruft libcheck
+.Dl compat9x-amd64-9.3.903000.20170608: /usr/local/lib/compat/libncp.so.4 using compat10x-amd64-10.3.1003000.20170608 compat library /usr/local/lib/compat/libipx.so.5
+.Dl compat10x-amd64-10.3.1003000.20170608: /usr/local/lib/compat/pam_ssh.so.5 missing library libssh.so.5
+.Dl compat10x-amd64-10.3.1003000.20170608: /usr/local/lib32/compat/pam_ssh.so.5 missing library libssh.so.5
+.Dl compat9x-amd64-9.3.903000.20170608: /usr/local/lib32/compat/libncp.so.4 using compat10x-amd64-10.3.1003000.20170608 compat library /usr/local/lib32/compat/libipx.so.5
+.Pp
+.Cm unpackaged
+finding some temporary files left over from an interrupted installation:
+.Pp
+.Dl $ pkg-decruft unpackaged
+.Dl /usr/local/bin/.classpath.Sfph96Xb45IL
+.Dl /usr/local/bin/.javavm.uusQ75boxjVD
+.Pp
+.Cm defunct
+locating an orphaned ansible package from an upstream change, and a local-only
+bsdpan package:
+.Pp
+.Dl $ pkg-decruft defunct
+.Dl ansible
+.Dl bsdpan-Mail-SpamAssassin-CompiledRegexps-body_0
+.Sh SEE ALSO
+.Xr pkg 8
+.Xr ldd 1
+.Xr procstat 1
+.Sh AUTHORS
+.An Thomas Hurst Aq tom@hur.st
