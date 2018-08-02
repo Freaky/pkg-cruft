@@ -40,6 +40,8 @@ trap(:INT) do
   exit! 2
 end
 
+trap(:PIPE, 'SYSTEM_DEFAULT')
+
 Thread.abort_on_exception = true
 
 # Stupidly simple futures - run the passed block in the background, return the
