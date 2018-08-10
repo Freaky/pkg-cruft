@@ -347,7 +347,7 @@ checkrestart:
 
     procs.keys.lazy.map do |pid|
       Procstat.binary(Integer(pid))
-    end.select(&:pid).group_by(&:path).each do |_path, pses|
+    end.select(&:pid).group_by(&:path).each_value do |pses|
       pses.each do |pse|
         if pse.path
           print "#{pse.path} (#{pkgdb.pkg_for_file(pse.path) || 'unpackaged'})"
