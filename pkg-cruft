@@ -135,7 +135,7 @@ module Ldd
         v.map do |_exe, lib, path|
           Lib.new(lib, path == 'not found' ? NOT_FOUND : File.absolute_path(path))
         end
-    end
+      end
   end
 end
 
