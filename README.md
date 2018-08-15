@@ -42,15 +42,27 @@ Run as root to check all running processes.  False-positives are possible.
 /usr/local/bin/mosh-server (mosh-1.3.2_4) running as 53815 (mosh-server)
 ```
 
-### unpackaged
+### files
 
 List files in PREFIX that are not provided by any installed package, ignoring
 files specified in env `IGNORE_UNPACKAGED`.
 
 ```
-% pkg-cruft unpackaged
+# pkg-cruft files
 /usr/local/apache-tomcat-6.0/conf/Catalina/localhost/host-manager.xml
 /usr/local/apache-tomcat-6.0/conf/Catalina/localhost/manager.xml
+...
+```
+
+### dirs
+
+List directories in PREFIX that do not contain any packaged files, ignoring
+any specified in `IGNORE_UNPACKAGED`.
+
+```
+# pkg-cruft dirs
+/usr/local/openjdk8/jre/lib/applet
+/usr/local/share/texmf/tex/latex
 ...
 ```
 
