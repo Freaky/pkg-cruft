@@ -83,5 +83,5 @@ Configuration is via environment variables:
 |----------|---------|-------------|
 | `PREFIX`   | `/usr/local` | Installation prefix |
 | `CONCURRENCY` | `16` | Workers to use for `libcheck` |
-| `IGNORE_UNPACKAGED` | `www/*:poudriere/*:varnish/*` | :-separated patterns to ignore in `unpackaged` |
+| `IGNORE_UNPACKAGED` | `www:poudriere:varnish` | :-separated patterns to ignore in `files` and `dirs`, anchored on PREFIX |
 | `IGNORE_LLD` | `go/src/*/testdata/*` | :-separated patterns to ignore in `libcheck` |
