@@ -11,7 +11,7 @@ A small Ruby script for helping deal with cruft on pkgng (FreeBSD etc) systems.
 ## Synopsis
 
 ```
-% pkg-cruft [ help | defunct | unpackaged | libcheck | checkrestart ]
+% pkg-cruft [ help | defunct | files | dirs | libcheck | checkrestart ]
 ```
 
 ## Subcommands:
