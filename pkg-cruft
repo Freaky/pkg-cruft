@@ -29,7 +29,7 @@ PREFIX = ENV.fetch('PREFIX', '/usr/local')
 
 CONCURRENCY = ENV.fetch('CONCURRENCY', 16).to_i.clamp(1, 32)
 
-IGNORE_UNPACKAGED = ENV.fetch('IGNORE_UNPACKAGED', 'www/*:poudriere/*:varnish/*')
+IGNORE_UNPACKAGED = ENV.fetch('IGNORE_UNPACKAGED', 'www:poudriere:varnish')
                        .split(':').map { |pat| File.join(PREFIX, pat) }
 
 IGNORE_LLD = ENV.fetch('IGNORE_LDD', 'go/src/*/testdata/*')
@@ -259,9 +259,13 @@ defunct:
 
   List local packages that are not available from remote repositories.
 
-unpackaged:
+files:
 
   List files in PREFIX that are not provided by any installed package.
+
+dirs:
+
+  List directories in PREFIX that contain no packaged files.
 
 libcheck:
 
@@ -279,7 +283,54 @@ checkrestart:
     puts Pkg.defunct_packages
   end
 
-  def self.unpackaged
+  PDir = Struct.new(:path, :ref, :subdirs)
+
+  def self.dirs
+    require 'find'
+
+    pkgdb = Pkgdb.new
+
+    walkdir = lambda do |path, pdir|
+      pdir.tap do
+        begin
+          Dir.each_child(path) do |f|
+            fn = File.join(path, f)
+            next if IGNORE_UNPACKAGED.any? { |ign| File.fnmatch(ign, fn) }
+
+            case File.ftype(fn)
+            when 'directory'
+              subdir = walkdir.call(fn, PDir.new(fn, 0, []))
+              pdir.ref += subdir.ref
+              pdir.subdirs << subdir
+            when 'file'
+              pdir.ref += 1 if pkgdb.pkg_for_file(fn)
+            end
+          end
+        rescue SystemCallError => e
+          # assume potential references we can't see
+          warn e.message
+          pdir.ref += 1
+          break
+        end
+      end
+      pdir
+    end
+
+    print_unused = lambda do |dir|
+      if dir.ref.zero?
+        puts dir.path
+      else
+        dir.subdirs.each do |sd|
+          print_unused.call(sd)
+        end
+      end
+    end
+
+    tree = walkdir.call(PREFIX, PDir.new(PREFIX, 0, []))
+    print_unused.call(tree)
+  end
+
+  def self.files
     require 'find'
 
     pkgdb = Pkgdb.new
